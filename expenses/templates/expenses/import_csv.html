@@ -1,0 +1,22 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <title>Import CSV</title>
+  <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.2/dist/css/bootstrap.min.css" rel="stylesheet">
+</head>
+<body class="bg-light">
+<div class="container mt-5">
+  <div class="card p-4">
+    <h3 class="mb-3">Import Expenses from CSV</h3>
+    <p class="text-muted">Upload a CSV with columns: <code>Title,Amount,Category,Date</code> (YYYY-MM-DD).</p>
+    <form method="post" enctype="multipart/form-data">
+      {% csrf_token %}
+      <input type="file" name="file" accept=".csv" class="form-control mb-3" required>
+      <button class="btn btn-success">Import</button>
+      <a href="{% url 'home' %}" class="btn btn-secondary">Back</a>
+    </form>
+  </div>
+</div>
+</body>
+</html>

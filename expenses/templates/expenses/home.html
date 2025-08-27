@@ -1,0 +1,252 @@
+{% load static %}
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Expense Dashboard</title>
+  <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.2/dist/css/bootstrap.min.css" rel="stylesheet">
+  <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+  <style>
+    body { background-color: #f8fafc; }
+    .card { border: none; border-radius: 1rem; box-shadow: 0 10px 20px rgba(0,0,0,0.06); }
+    .table thead th { position: sticky; top: 0; background:#fff; z-index:1; }
+    .table-responsive { max-height: 420px; overflow:auto; }
+    .small-input { max-width: 160px; }
+  </style>
+</head>
+<body>
+<div class="container py-4">
+  <div class="d-flex flex-wrap justify-content-between align-items-center mb-3">
+    <h2 class="fw-bold my-2">💰 Expense Dashboard</h2>
+    <div class="d-flex gap-2 my-2 align-items-center">
+      <a href="{% url 'add_expense' %}" class="btn btn-primary">+ Add Expense</a>
+
+      <!-- CSV Import (inline form) -->
+      <form action="{% url 'import_csv' %}" method="post" enctype="multipart/form-data" class="d-flex gap-2 align-items-center m-0 p-0">
+        {% csrf_token %}
+        <input type="file" name="file" accept=".csv" required class="form-control form-control-sm small-input">
+        <button type="submit" class="btn btn-outline-dark btn-sm">Import CSV</button>
+      </form>
+
+      <a href="{% url 'export_csv' %}?start={{ start|date:'Y-m-d' }}&end={{ end|date:'Y-m-d' }}&q={{ q }}&sort={{ sort }}" class="btn btn-outline-secondary">Export CSV</a>
+    </div>
+  </div>
+
+  <!-- Filters (GET) -->
+  <form class="card p-3 mb-4" method="get">
+    <div class="row g-2 align-items-end">
+      <div class="col-12 col-md-3">
+        <label class="form-label">Search</label>
+        <input type="text" name="q" value="{{ q }}" class="form-control" placeholder="Title or category">
+      </div>
+      <div class="col-6 col-md-2">
+        <label class="form-label">Start</label>
+        <input type="date" name="start" value="{{ start|date:'Y-m-d' }}" class="form-control">
+      </div>
+      <div class="col-6 col-md-2">
+        <label class="form-label">End</label>
+        <input type="date" name="end" value="{{ end|date:'Y-m-d' }}" class="form-control">
+      </div>
+      <div class="col-6 col-md-2">
+        <label class="form-label">Sort</label>
+        <select name="sort" class="form-select">
+          {% for key,label in sort_options %}
+            <option value="{{ key }}" {% if sort == key %}selected{% endif %}>{{ label }}</option>
+          {% endfor %}
+        </select>
+      </div>
+      <div class="col-6 col-md-2">
+        <label class="form-label">Rows / page</label>
+        <input type="number" name="page_size" min="5" max="200" value="{{ page_size }}" class="form-control">
+      </div>
+      <div class="col-12 col-md-1 d-grid">
+        <button class="btn btn-success">Apply</button>
+      </div>
+    </div>
+
+    <div class="mt-2 d-flex gap-2">
+      <a class="btn btn-sm btn-outline-secondary" href="?q={{ q }}&sort={{ sort }}&page_size={{ page_size }}&start={{ start|date:'Y-m-d' }}&end={{ end|date:'Y-m-d' }}">Custom</a>
+      <a class="btn btn-sm btn-outline-secondary" href="?q=&sort=-date&page_size={{ page_size }}">Last 30 days</a>
+      <a class="btn btn-sm btn-outline-secondary" href="?q=&sort=-date&page_size={{ page_size }}&start={{ now|date:'Y-m' }}-01&end={{ now|date:'Y-m-d' }}">This month</a>
+      <a class="btn btn-sm btn-outline-secondary" href="?q=&sort=-date&page_size={{ page_size }}&start={{ now|date:'Y' }}-01-01&end={{ now|date:'Y-m-d' }}">This year</a>
+    </div>
+  </form>
+
+  <!-- Summary Cards -->
+  <div class="row g-3 mb-4">
+    <div class="col-md-4">
+      <div class="card p-3">
+        <div class="d-flex justify-content-between">
+          <div>
+            <div class="text-muted">Total Spend</div>
+            <div class="fs-3 fw-bold" id="totalSpend">₹ {{ total }}</div>
+          </div>
+          <div class="display-6">🧾</div>
+        </div>
+      </div>
+    </div>
+    <div class="col-md-4">
+      <div class="card p-3">
+        <div class="d-flex justify-content-between">
+          <div>
+            <div class="text-muted">Average / day</div>
+            <div class="fs-3 fw-bold" id="avgDaily">₹ {{ avg_daily|floatformat:2 }}</div>
+          </div>
+          <div class="display-6">📈</div>
+        </div>
+      </div>
+    </div>
+    <div class="col-md-4">
+      <div class="card p-3">
+        <div class="d-flex justify-content-between">
+          <div>
+            <div class="text-muted">Top Category</div>
+            <div class="fs-3 fw-bold" id="topCategory">
+              {% if by_category %}{{ by_category.0.category }} (₹ {{ by_category.0.total }}){% else %}-{% endif %}
+            </div>
+          </div>
+          <div class="display-6">🏷️</div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Charts -->
+  <div class="row g-3 mb-4">
+    <div class="col-md-6">
+      <div class="card p-3">
+        <h6 class="mb-3">Spending by Category</h6>
+        <canvas id="catChart" height="220"></canvas>
+      </div>
+    </div>
+    <div class="col-md-6">
+      <div class="card p-3">
+        <h6 class="mb-3">Daily Spend</h6>
+        <canvas id="dayChart" height="220"></canvas>
+      </div>
+    </div>
+  </div>
+
+  <!-- Table + Bulk Actions -->
+  <form action="{% url 'bulk_delete' %}" method="post" class="card p-3">
+    {% csrf_token %}
+    <div class="d-flex justify-content-between align-items-center mb-2">
+      <h6 class="m-0">Expenses ({{ page_obj.paginator.count }})</h6>
+      <div class="d-flex gap-2">
+        <button class="btn btn-outline-danger btn-sm" type="submit" onclick="return confirm('Delete selected?')">Delete Selected</button>
+      </div>
+    </div>
+    <div class="table-responsive">
+      <table class="table table-hover align-middle mb-0">
+        <thead>
+          <tr>
+            <th><input type="checkbox" id="chkAll" onclick="toggleAll(this)"></th>
+            <th>ID</th>
+            <th>Title</th>
+            <th>Amount</th>
+            <th>Category</th>
+            <th>Date</th>
+            <th>Actions</th>
+          </tr>
+        </thead>
+        <tbody>
+          {% for e in expenses %}
+          <tr>
+            <td><input type="checkbox" name="ids" value="{{ e.id }}" class="row-chk"></td>
+            <td>{{ e.id }}</td>
+            <td>{{ e.title }}</td>
+            <td>₹ {{ e.amount }}</td>
+            <td><span class="badge bg-light text-dark">{{ e.category }}</span></td>
+            <td>{{ e.date|date:"Y-m-d" }}</td>
+            <td class="d-flex gap-2">
+              <a class="btn btn-sm btn-outline-primary" href="{% url 'edit_expense' e.id %}">Edit</a>
+              <a class="btn btn-sm btn-outline-secondary" href="{% url 'duplicate_expense' e.id %}" onclick="return confirm('Duplicate this expense?')">Duplicate</a>
+              <a class="btn btn-sm btn-outline-danger" href="{% url 'delete_expense' e.id %}">Delete</a>
+            </td>
+          </tr>
+          {% empty %}
+          <tr><td colspan="7" class="text-center text-muted">No expenses found.</td></tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+
+    <!-- Pagination -->
+    <nav class="mt-2">
+      <ul class="pagination justify-content-end mb-0">
+        {% if page_obj.has_previous %}
+          <li class="page-item"><a class="page-link" href="?page={{ page_obj.previous_page_number }}&q={{ q }}&start={{ start|date:'Y-m-d' }}&end={{ end|date:'Y-m-d' }}&sort={{ sort }}&page_size={{ page_size }}">Previous</a></li>
+        {% else %}
+          <li class="page-item disabled"><span class="page-link">Previous</span></li>
+        {% endif %}
+        <li class="page-item disabled"><span class="page-link">Page {{ page_obj.number }} of {{ page_obj.paginator.num_pages }}</span></li>
+        {% if page_obj.has_next %}
+          <li class="page-item"><a class="page-link" href="?page={{ page_obj.next_page_number }}&q={{ q }}&start={{ start|date:'Y-m-d' }}&end={{ end|date:'Y-m-d' }}&sort={{ sort }}&page_size={{ page_size }}">Next</a></li>
+        {% else %}
+          <li class="page-item disabled"><span class="page-link">Next</span></li>
+        {% endif %}
+      </ul>
+    </nav>
+  </form>
+</div>
+
+<script>
+  function qs(k) {
+    const u = new URL(window.location);
+    return u.searchParams.get(k);
+  }
+  function rangeParams() {
+    return `start=${qs('start') || '{{ start|date:"Y-m-d" }}'}&end=${qs('end') || '{{ end|date:"Y-m-d" }}'}&q=${qs('q')||''}`;
+  }
+
+  // Fetch and draw charts and refresh summary
+  async function drawAll() {
+    // Summary
+    try {
+      const sumRes = await fetch(`/api/summary/?${rangeParams()}`);
+      if (sumRes.ok) {
+        const s = await sumRes.json();
+        document.getElementById('totalSpend').innerText = `₹ ${Number(s.total).toFixed(2)}`;
+        document.getElementById('avgDaily').innerText = `₹ ${Number(s.avg_daily).toFixed(2)}`;
+        document.getElementById('topCategory').innerText = s.top_category ? `${s.top_category} (₹ ${Number(s.top_category_total).toFixed(2)})` : '-';
+      }
+    } catch (e) { console.warn("summary fetch failed", e); }
+
+    // Category
+    try {
+      const catRes = await fetch(`/api/by-category/?${rangeParams()}`);
+      const cat = await catRes.json();
+      const ctx = document.getElementById('catChart').getContext('2d');
+      if (window._catChart) window._catChart.destroy();
+      window._catChart = new Chart(ctx, {
+        type: 'doughnut',
+        data: { labels: cat.labels, datasets: [{ data: cat.values }] },
+        options: { responsive: true, plugins: { legend: { position: 'bottom' } } }
+      });
+    } catch (e) { console.warn("category fetch failed", e); }
+
+    // Daily
+    try {
+      const dayRes = await fetch(`/api/by-day/?${rangeParams()}`);
+      const day = await dayRes.json();
+      const ctx2 = document.getElementById('dayChart').getContext('2d');
+      if (window._dayChart) window._dayChart.destroy();
+      window._dayChart = new Chart(ctx2, {
+        type: 'bar',
+        data: { labels: day.labels, datasets: [{ label: 'Daily Spend', data: day.values }] },
+        options: { responsive: true, scales: { y: { beginAtZero: true } } }
+      });
+    } catch (e) { console.warn("day fetch failed", e); }
+  }
+
+  // Kick off drawing
+  drawAll();
+
+  // Select all helper
+  function toggleAll(chk) {
+    document.querySelectorAll('.row-chk').forEach(c => c.checked = chk.checked);
+  }
+</script>
+</body>
+</html>
